@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+*.pyd
+*.egg-info/
+.eggs/
+.dist-info/
+build/
+dist/
+.python-version
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# OS / Editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Project artifacts and data
+runs/
+*.pt
+*.ckpt
+*.csv
+*.jsonl
+*.log
+nohup.out
+logs/
+
+# Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
