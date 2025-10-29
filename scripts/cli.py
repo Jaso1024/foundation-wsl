@@ -1,35 +1,33 @@
 #!/usr/bin/env python3
 """
-Unified CLI to launch:
-- ModSum sweep data generation/training runs
-- Foundation (weights->metadata) training on existing runs
+Interactive CLI to:
+- Run ModSum sweep (many per-run trainings)
+- Train the foundation (weights->metadata) model on existing runs
+- List and kill background jobs launched via this CLI
 
-By default, jobs launch in the background and stream logs to a timestamped file.
-Use --fg to run in the foreground.
-
-Examples:
-  # Background sweep with defaults
-  python scripts/cli.py sweep --runs 10000
-
-  # Background foundation training on existing runs
-  python scripts/cli.py foundation-train --epochs 50 --batch-size 1024
-
-  # Foreground (no background)
-  python scripts/cli.py --fg sweep --runs 1000
+Defaults:
+- Runs jobs in the background and writes logs to timestamped files
+- Returns the PID on launch so you can kill it later
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import signal
 import subprocess
 import sys
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+REG_DIR = REPO_ROOT / "runs" / "cli"
+REG_PATH = REG_DIR / "registry.json"
 
 
 def ts() -> str:
@@ -40,7 +38,31 @@ def ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
 
-def run_bg(cmd: List[str], log_file: Path) -> int:
+def load_registry() -> Dict[str, Dict]:
+    try:
+        with open(REG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_registry(reg: Dict[str, Dict]) -> None:
+    ensure_dir(REG_DIR)
+    tmp = REG_DIR / f"registry.{ts()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(reg, f, indent=2)
+    tmp.replace(REG_PATH)
+
+
+def is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def run_bg(cmd: List[str], log_file: Path, job_type: str, params: Dict[str, str]) -> int:
     ensure_dir(log_file.parent)
     with open(log_file, "ab", buffering=0) as lf:
         # Unbuffered (-u) in child to get timely logs
@@ -52,7 +74,23 @@ def run_bg(cmd: List[str], log_file: Path) -> int:
             stderr=subprocess.STDOUT,
             preexec_fn=os.setsid if hasattr(os, "setsid") else None,
         )
-    print(f"Started background job PID={proc.pid}\n  Log: {log_file}")
+    # Register job
+    reg = load_registry()
+    jid = str(uuid.uuid4())
+    reg[jid] = {
+        "id": jid,
+        "pid": proc.pid,
+        "pgid": proc.pid,
+        "cmd": cmd,
+        "type": job_type,
+        "params": params,
+        "log": str(log_file),
+        "cwd": str(REPO_ROOT),
+        "start": ts(),
+        "status": "running",
+    }
+    save_registry(reg)
+    print(f"Started background job\n  PID: {proc.pid}\n  Log: {log_file}")
     return 0
 
 
@@ -65,7 +103,7 @@ def add_common(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="ModSum + Foundation training CLI")
+    ap = argparse.ArgumentParser(description="ModSum + Foundation training CLI", add_help=True)
     ap.add_argument("--fg", action="store_true", help="Run in foreground (default: background).")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -104,65 +142,311 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def prompt_int(prompt: str, default: int) -> int:
+    s = input(f"{prompt} [{default}]: ").strip()
+    if not s:
+        return default
+    try:
+        return int(s)
+    except ValueError:
+        print("Invalid int; using default.")
+        return default
+
+
+def prompt_float(prompt: str, default: float) -> float:
+    s = input(f"{prompt} [{default}]: ").strip()
+    if not s:
+        return default
+    try:
+        return float(s)
+    except ValueError:
+        print("Invalid float; using default.")
+        return default
+
+
+def prompt_str(prompt: str, default: str) -> str:
+    s = input(f"{prompt} [{default}]: ").strip()
+    return s or default
+
+
+def prompt_yes(prompt: str, default_yes: bool = True) -> bool:
+    default = "Y/n" if default_yes else "y/N"
+    s = input(f"{prompt} ({default}): ").strip().lower()
+    if not s:
+        return default_yes
+    return s in {"y", "yes"}
+
+
+def interactive_menu() -> int:
+    while True:
+        print("\n=== ModSum/Foundation CLI ===")
+        print("1) Run ModSum sweep")
+        print("2) Train Foundation (weights->metadata)")
+        print("3) List background jobs")
+        print("4) Kill background jobs")
+        print("5) Exit")
+        choice = input("Select [1-5]: ").strip()
+        if choice == "1":
+            return interactive_sweep()
+        elif choice == "2":
+            return interactive_foundation_train()
+        elif choice == "3":
+            return list_jobs()
+        elif choice == "4":
+            return kill_jobs()
+        elif choice == "5":
+            return 0
+        else:
+            print("Invalid choice.")
+
+
+def build_sweep_cmd(params: Dict[str, str]) -> List[str]:
+    cmd = [
+        sys.executable,
+        "-u",
+        str(REPO_ROOT / "experiments" / "sweep_modsum.py"),
+        f"--runs={params['runs']}",
+        f"--minN={params['minN']}",
+        f"--maxN={params['maxN']}",
+        f"--base-out={params['base_out']}",
+        f"--sweep-out={params['sweep_out']}",
+    ]
+    if params.get("seed"):
+        cmd.append(f"--seed={params['seed']}")
+    if params.get("batch_size_fixed"):
+        cmd.append(f"--batch-size-fixed={params['batch_size_fixed']}")
+    if params.get("batch_choices"):
+        cmd.append(f"--batch-choices={params['batch_choices']}")
+    if params.get("num_workers") is not None:
+        cmd.append(f"--num-workers={params['num_workers']}")
+    return cmd
+
+
+def interactive_sweep() -> int:
+    print("\n[ModSum Sweep]")
+    runs = prompt_int("Number of runs", 200)
+    minN = prompt_int("Min N", 7)
+    maxN = prompt_int("Max N", 31)
+    base_out = prompt_str("Base out dir", "runs/modsum")
+    sweep_out = prompt_str("Sweep out dir", "runs/modsum_sweeps")
+    seed_s = prompt_str("Seed (blank=random)", "")
+    # Optional perf knobs
+    bs_fixed = prompt_str("Fixed batch size (blank=auto)", "")
+    bs_choices = prompt_str("Batch choices CSV (blank=auto)", "")
+    try:
+        num_workers = int(prompt_str("DataLoader workers (blank=0)", "0") or "0")
+    except ValueError:
+        num_workers = 0
+    bg = prompt_yes("Run in background?", True)
+
+    params = {
+        "runs": str(runs),
+        "minN": str(minN),
+        "maxN": str(maxN),
+        "base_out": base_out,
+        "sweep_out": sweep_out,
+        "seed": seed_s,
+        "batch_size_fixed": bs_fixed,
+        "batch_choices": bs_choices,
+        "num_workers": str(num_workers),
+    }
+    cmd = build_sweep_cmd(params)
+    log = REPO_ROOT / sweep_out / "cli_logs" / f"sweep_{ts()}.out"
+    if bg:
+        return run_bg(cmd, log, job_type="sweep", params=params)
+    else:
+        return run_fg(cmd)
+
+
+def build_foundation_cmd(params: Dict[str, str]) -> List[str]:
+    cmd = [
+        sys.executable,
+        "-u",
+        str(REPO_ROOT / "experiments" / "weights2meta_train.py"),
+        f"--runs-base={params['runs_base']}",
+        f"--outdir={params['outdir']}",
+        f"--epochs={params['epochs']}",
+        f"--batch-size={params['batch_size']}",
+        f"--num-workers={params['num_workers']}",
+        f"--lr={params['lr']}",
+        f"--token-size={params['token_size']}",
+        f"--d-model={params['d_model']}",
+        f"--nhead={params['nhead']}",
+        f"--nlayers={params['nlayers']}",
+        f"--d-ff={params['d_ff']}",
+        f"--dropout={params['dropout']}",
+        f"--train-frac={params['train_frac']}",
+        f"--seed={params['seed']}",
+    ]
+    return cmd
+
+
+def interactive_foundation_train() -> int:
+    print("\n[Foundation Training]")
+    runs_base = prompt_str("Runs base dir", "runs/modsum")
+    outdir = prompt_str("Output dir", "runs/weights2meta")
+    epochs = prompt_int("Epochs", 30)
+    batch_size = prompt_int("Batch size", 512)
+    num_workers = prompt_int("DataLoader workers", 0)
+    lr = prompt_float("Learning rate", 1e-3)
+    token_size = prompt_int("Token size", 64)
+    d_model = prompt_int("d_model", 64)
+    nhead = prompt_int("nhead", 4)
+    nlayers = prompt_int("nlayers", 2)
+    d_ff = prompt_int("d_ff", 128)
+    dropout = prompt_float("dropout", 0.1)
+    train_frac = prompt_float("Train fraction", 0.9)
+    seed = prompt_int("Seed", 1337)
+    bg = prompt_yes("Run in background?", True)
+
+    params = {
+        "runs_base": runs_base,
+        "outdir": outdir,
+        "epochs": str(epochs),
+        "batch_size": str(batch_size),
+        "num_workers": str(num_workers),
+        "lr": str(lr),
+        "token_size": str(token_size),
+        "d_model": str(d_model),
+        "nhead": str(nhead),
+        "nlayers": str(nlayers),
+        "d_ff": str(d_ff),
+        "dropout": str(dropout),
+        "train_frac": str(train_frac),
+        "seed": str(seed),
+    }
+    cmd = build_foundation_cmd(params)
+    log = REPO_ROOT / outdir / "cli_logs" / f"foundation_train_{ts()}.out"
+    if bg:
+        return run_bg(cmd, log, job_type="foundation-train", params=params)
+    else:
+        return run_fg(cmd)
+
+
+def list_jobs() -> int:
+    reg = load_registry()
+    if not reg:
+        print("No jobs tracked.")
+        return 0
+    print("\nTracked jobs:")
+    rows = []
+    for i, j in enumerate(reg.values(), 1):
+        alive = is_running(int(j.get("pid", -1)))
+        status = "running" if alive else "stopped"
+        print(f"{i:3d}. PID={j['pid']:>6} type={j['type']:<16} started={j['start']} status={status} log={j['log']}")
+        rows.append(j)
+    return 0
+
+
+def kill_jobs() -> int:
+    reg = load_registry()
+    if not reg:
+        print("No jobs tracked.")
+        return 0
+    jobs = list(reg.values())
+    print("\nSelect jobs to kill (comma-separated indices), or 'all':")
+    for i, j in enumerate(jobs, 1):
+        alive = is_running(int(j.get("pid", -1)))
+        status = "running" if alive else "stopped"
+        print(f"{i:3d}. PID={j['pid']:>6} type={j['type']:<16} started={j['start']} status={status} log={j['log']}")
+    s = input("Kill which? [e.g., 1,3] or all: ").strip().lower()
+    idxs: List[int] = []
+    if s == "all":
+        idxs = list(range(1, len(jobs) + 1))
+    else:
+        try:
+            idxs = [int(x) for x in s.split(",") if x.strip()]
+        except ValueError:
+            print("Invalid selection.")
+            return 1
+    if not idxs:
+        print("No selection.")
+        return 1
+    grace = prompt_int("Grace seconds before SIGKILL", 5)
+    for i in idxs:
+        if not (1 <= i <= len(jobs)):
+            continue
+        j = jobs[i - 1]
+        pid = int(j.get("pid", -1))
+        if pid <= 0:
+            continue
+        try:
+            print(f"Sending SIGTERM to PID {pid} ...")
+            os.killpg(pid, signal.SIGTERM)
+        except Exception as e:
+            print(f"  WARN: SIGTERM failed for {pid}: {e}")
+        t0 = time.time()
+        while time.time() - t0 < grace:
+            if not is_running(pid):
+                break
+            time.sleep(0.2)
+        if is_running(pid):
+            try:
+                print(f"  Escalating SIGKILL to PID {pid} ...")
+                os.killpg(pid, signal.SIGKILL)
+            except Exception as e:
+                print(f"  WARN: SIGKILL failed for {pid}: {e}")
+        # Update registry status
+        j["status"] = "stopped"
+    # Save registry
+    new_reg = {j["id"]: j for j in jobs}
+    save_registry(new_reg)
+    print("Done.")
+    return 0
+
+
 def main(argv: List[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
-    ap = build_parser()
-    args = ap.parse_args(argv)
+    # If subcommands are provided, keep non-interactive mode for power users
+    if argv:
+        ap = build_parser()
+        args = ap.parse_args(argv)
+        # Decide foreground/background
+        foreground = bool(args.fg)
 
-    # Decide foreground/background
-    foreground = bool(args.fg)
+        if args.cmd == "sweep":
+            params = {
+                "runs": str(args.runs),
+                "minN": str(args.minN),
+                "maxN": str(args.maxN),
+                "base_out": args.base_out,
+                "sweep_out": args.sweep_out,
+                "seed": str(args.seed) if args.seed is not None else "",
+                "batch_size_fixed": str(args.batch_size_fixed) if args.batch_size_fixed is not None else "",
+                "batch_choices": args.batch_choices or "",
+                "num_workers": str(args.num_workers) if args.num_workers is not None else "",
+            }
+            cmd = build_sweep_cmd(params)
+            log = Path(args.log) if args.log else (REPO_ROOT / args.sweep_out / "cli_logs" / f"sweep_{ts()}.out")
+            return run_fg(cmd) if foreground else run_bg(cmd, log, job_type="sweep", params=params)
 
-    if args.cmd == "sweep":
-        cmd = [
-            sys.executable,
-            "-u",
-            str(REPO_ROOT / "experiments" / "sweep_modsum.py"),
-            f"--runs={args.runs}",
-            f"--minN={args.minN}",
-            f"--maxN={args.maxN}",
-            f"--base-out={args.base_out}",
-            f"--sweep-out={args.sweep_out}",
-        ]
-        if args.seed is not None:
-            cmd.append(f"--seed={args.seed}")
-        # Forward optional flags only if provided
-        if args.batch_size_fixed is not None:
-            cmd.append(f"--batch-size-fixed={args.batch_size_fixed}")
-        if args.batch_choices:
-            cmd.append(f"--batch-choices={args.batch_choices}")
-        if args.num_workers is not None:
-            cmd.append(f"--num-workers={args.num_workers}")
+        if args.cmd == "foundation-train":
+            params = {
+                "runs_base": args.runs_base,
+                "outdir": args.outdir,
+                "epochs": str(args.epochs),
+                "batch_size": str(args.batch_size),
+                "num_workers": str(args.num_workers),
+                "lr": str(args.lr),
+                "token_size": str(args.token_size),
+                "d_model": str(args.d_model),
+                "nhead": str(args.nhead),
+                "nlayers": str(args.nlayers),
+                "d_ff": str(args.d_ff),
+                "dropout": str(args.dropout),
+                "train_frac": str(args.train_frac),
+                "seed": str(args.seed),
+            }
+            cmd = build_foundation_cmd(params)
+            log = Path(args.log) if args.log else (REPO_ROOT / args.outdir / "cli_logs" / f"foundation_train_{ts()}.out")
+            return run_fg(cmd) if foreground else run_bg(cmd, log, job_type="foundation-train", params=params)
 
-        log = Path(args.log) if args.log else (REPO_ROOT / args.sweep_out / "cli_logs" / f"sweep_{ts()}.out")
-        return run_fg(cmd) if foreground else run_bg(cmd, log)
+        ap.error("Unknown command")
+        return 2
 
-    if args.cmd == "foundation-train":
-        cmd = [
-            sys.executable,
-            "-u",
-            str(REPO_ROOT / "experiments" / "weights2meta_train.py"),
-            f"--runs-base={args.runs_base}",
-            f"--outdir={args.outdir}",
-            f"--epochs={args.epochs}",
-            f"--batch-size={args.batch_size}",
-            f"--num-workers={args.num_workers}",
-            f"--lr={args.lr}",
-            f"--token-size={args.token_size}",
-            f"--d-model={args.d_model}",
-            f"--nhead={args.nhead}",
-            f"--nlayers={args.nlayers}",
-            f"--d-ff={args.d_ff}",
-            f"--dropout={args.dropout}",
-            f"--train-frac={args.train_frac}",
-            f"--seed={args.seed}",
-        ]
-        log = Path(args.log) if args.log else (REPO_ROOT / args.outdir / "cli_logs" / f"foundation_train_{ts()}.out")
-        return run_fg(cmd) if foreground else run_bg(cmd, log)
-
-    ap.error("Unknown command")
-    return 2
+    # No args -> interactive menu
+    return interactive_menu()
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
