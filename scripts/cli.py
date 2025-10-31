@@ -184,7 +184,9 @@ def interactive_menu() -> int:
         print("2) Train Foundation (weights->metadata)")
         print("3) List background jobs")
         print("4) Kill background jobs")
-        print("5) Exit")
+        print("5) Run MNIST sweep")
+        print("6) Train MNIST (MLP)")
+        print("7) Exit")
         choice = input("Select [1-5]: ").strip()
         if choice == "1":
             return interactive_sweep()
@@ -195,6 +197,10 @@ def interactive_menu() -> int:
         elif choice == "4":
             return kill_jobs()
         elif choice == "5":
+            return interactive_mnist_sweep()
+        elif choice == "6":
+            return interactive_mnist_train()
+        elif choice == "7":
             return 0
         else:
             print("Invalid choice.")
@@ -261,6 +267,58 @@ def build_mnist_train_cmd(params: Dict[str, str]) -> List[str]:
         f"--data={params['data']}",
     ]
     return cmd
+
+
+def interactive_mnist_sweep() -> int:
+    print("\n[MNIST Sweep]")
+    runs = prompt_int("Number of runs", 50)
+    epochs = prompt_int("Epochs per run", 3)
+    batch_size = prompt_int("Batch size per run", 128)
+    base_out = prompt_str("Base out dir", "runs/mnist")
+    sweep_out = prompt_str("Sweep out dir", "runs/mnist_sweeps")
+    seed_s = prompt_str("Seed (blank=random)", "")
+    bg = prompt_yes("Run in background?", True)
+
+    params = {
+        "runs": str(runs),
+        "epochs": str(epochs),
+        "batch_size": str(batch_size),
+        "base_out": base_out,
+        "sweep_out": sweep_out,
+        "seed": seed_s,
+    }
+    cmd = build_mnist_sweep_cmd(params)
+    log = REPO_ROOT / sweep_out / "cli_logs" / f"mnist_sweep_{ts()}.out"
+    return run_bg(cmd, log, job_type="mnist-sweep", params=params) if bg else run_fg(cmd)
+
+
+def interactive_mnist_train() -> int:
+    print("\n[MNIST Train]")
+    epochs = prompt_int("Epochs", 3)
+    batch_size = prompt_int("Batch size", 128)
+    lr = prompt_float("Learning rate", 1e-3)
+    hidden1 = prompt_int("Hidden1 width", 256)
+    hidden2 = prompt_int("Hidden2 width", 128)
+    val_frac = prompt_float("Validation fraction", 0.1)
+    seed = prompt_int("Seed", 1337)
+    outdir = prompt_str("Output dir", "runs/mnist")
+    data = prompt_str("Data dir", "data")
+    bg = prompt_yes("Run in background?", True)
+
+    params = {
+        "epochs": str(epochs),
+        "batch_size": str(batch_size),
+        "lr": str(lr),
+        "hidden1": str(hidden1),
+        "hidden2": str(hidden2),
+        "val_frac": str(val_frac),
+        "seed": str(seed),
+        "outdir": outdir,
+        "data": data,
+    }
+    cmd = build_mnist_train_cmd(params)
+    log = REPO_ROOT / outdir / "cli_logs" / f"mnist_train_{ts()}.out"
+    return run_bg(cmd, log, job_type="mnist-train", params=params) if bg else run_fg(cmd)
 
 
 def interactive_sweep() -> int:
