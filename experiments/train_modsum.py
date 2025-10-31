@@ -52,6 +52,7 @@ if not try_import_torch():
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 
@@ -93,29 +94,26 @@ class ModSumDataset(torch.utils.data.Dataset):
         return self.x[idx], self.y[idx], self.t[idx]
 
 
-class TinyModNet(nn.Module):
-    """Two embeddings -> combine -> nonlinearity -> classifier over N classes.
+class ModSumMLP(nn.Module):
+    """Regular MLP over one-hot(x) || one-hot(y) -> N-class logits."""
 
-    Intentionally tiny and CPU-friendly, but with a hidden nonlinearity.
-    """
-
-    def __init__(self, N: int, emb_dim: int = 16, hidden_dim: int = 32):
+    def __init__(self, N: int, hidden1: int = 32, hidden2: int = 128):
         super().__init__()
         self.N = N
-        self.emb_x = nn.Embedding(N, emb_dim)
-        self.emb_y = nn.Embedding(N, emb_dim)
-        self.fc1 = nn.Linear(emb_dim, hidden_dim)
-        self.act = nn.ReLU()
-        self.fc2 = nn.Linear(hidden_dim, N)
+        inp = 2 * N
+        self.net = nn.Sequential(
+            nn.Linear(inp, hidden1),
+            nn.ReLU(),
+            nn.Linear(hidden1, hidden2),
+            nn.ReLU(),
+            nn.Linear(hidden2, N),
+        )
 
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        ex = self.emb_x(x)
-        ey = self.emb_y(y)
-        h = ex + ey
-        h = self.fc1(h)
-        h = self.act(h)
-        logits = self.fc2(h)
-        return logits
+        x1 = F.one_hot(x, num_classes=self.N).to(dtype=torch.float32)
+        y1 = F.one_hot(y, num_classes=self.N).to(dtype=torch.float32)
+        z = torch.cat([x1, y1], dim=1)
+        return self.net(z)
 
 
 def split_train_test(samples: List[Sample], train_frac: float, seed: int) -> Tuple[List[Sample], List[Sample]]:
@@ -176,9 +174,9 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--maxN", type=int, default=31, help="Max N when sampling (inclusive). Default: 31.")
     p.add_argument("--seed", type=int, default=None, help="Base seed. If omitted, chosen randomly.")
     p.add_argument("--epochs", type=int, default=20, help="Training epochs. Default: 20.")
-    p.add_argument("--lr", type=float, default=0.1, help="Learning rate. Default: 0.1.")
-    p.add_argument("--emb-dim", type=int, default=16, help="Embedding dimension. Default: 16.")
-    p.add_argument("--hidden-dim", type=int, default=32, help="Hidden dimension. Default: 32.")
+    p.add_argument("--lr", type=float, default=3e-3, help="Learning rate (Adam). Default: 3e-3.")
+    p.add_argument("--emb-dim", type=int, default=32, help="First hidden width. Default: 32.")
+    p.add_argument("--hidden-dim", type=int, default=128, help="Second hidden width. Default: 128.")
     p.add_argument("--train-frac", type=float, default=0.8, help="Fraction of total pairs reserved as train pool (test is the rest). Default: 0.8.")
     p.add_argument("--train-samples", type=int, default=None, help="Number of training samples per epoch (<= train pool). Default: use full train pool.")
     p.add_argument("--resample-each-epoch", action="store_true", help="If set with --train-samples, resample a new subset each epoch.")
@@ -227,10 +225,10 @@ def run_training(args) -> Path:
     test_loader = torch.utils.data.DataLoader(test_ds, batch_size=args.batch_size, pin_memory=pin)
 
     # Model
-    model = TinyModNet(N=N, emb_dim=args.emb_dim, hidden_dim=args.hidden_dim)
+    model = ModSumMLP(N=N, hidden1=args.emb_dim, hidden2=args.hidden_dim)
     model = model.to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=args.lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     # Train (optionally resample training subset each epoch)
     for ep in range(args.epochs):

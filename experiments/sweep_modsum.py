@@ -46,7 +46,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 def sample_cfg(rng: random.Random, minN: int, maxN: int, epochs: int, batch_size: int, train_samples: int | None, resample_each_epoch: bool) -> Dict[str, str]:
     N = rng.randint(minN, maxN)
     # Keep some variety in other hyperparameters, but epochs and batch_size are fixed
-    lr = rng.choice([0.05, 0.1, 0.2, 0.3])
+    lr = rng.choice([5e-4, 1e-3, 3e-3, 1e-2])
     emb_dim = rng.choice([8, 12, 16, 24])
     hidden_dim = rng.choice([16, 24, 32, 48])
     train_frac = rng.choice([0.7, 0.8, 0.9])
