@@ -115,29 +115,41 @@ def main(argv: List[str]) -> int:
     def manual_download(dest_root: Path) -> None:
         import ssl
         from urllib.request import urlopen
-        base = "https://ossci-datasets.s3.amazonaws.com/mnist/"
         files = [
             "train-images-idx3-ubyte.gz",
             "train-labels-idx1-ubyte.gz",
             "t10k-images-idx3-ubyte.gz",
             "t10k-labels-idx1-ubyte.gz",
         ]
+        mirrors = [
+            "https://storage.googleapis.com/cvdf-datasets/mnist/",
+            "https://ossci-datasets.s3.amazonaws.com/mnist/",
+        ]
         raw = dest_root / "MNIST" / "raw"
         raw.mkdir(parents=True, exist_ok=True)
-        ctx = ssl.create_default_context()
-        # Best-effort: if corporate MITM breaks chain, fall back to unverified context
-        try_unverified = False
-        try:
-            for fn in files:
-                with urlopen(base + fn, context=ctx) as r, open(raw / fn, "wb") as f:
+        def try_fetch(url: str, dst: Path) -> bool:
+            try:
+                ctx = ssl.create_default_context()
+                with urlopen(url, context=ctx) as r, open(dst, "wb") as f:
                     f.write(r.read())
-        except Exception:
-            try_unverified = True
-        if try_unverified:
-            unverified = ssl._create_unverified_context()  # type: ignore[attr-defined]
-            for fn in files:
-                with urlopen(base + fn, context=unverified) as r, open(raw / fn, "wb") as f:
-                    f.write(r.read())
+                return True
+            except Exception:
+                try:
+                    unverified = ssl._create_unverified_context()  # type: ignore[attr-defined]
+                    with urlopen(url, context=unverified) as r, open(dst, "wb") as f:
+                        f.write(r.read())
+                    return True
+                except Exception:
+                    return False
+        for fn in files:
+            dst = raw / fn
+            ok = False
+            for base in mirrors:
+                if try_fetch(base + fn, dst):
+                    ok = True
+                    break
+            if not ok:
+                raise RuntimeError(f"Failed to download {fn} from mirrors {mirrors}")
 
     try:
         train_full = datasets.MNIST(root=args.data, train=True, transform=tfm, download=True)
