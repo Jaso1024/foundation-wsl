@@ -88,10 +88,14 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 @torch.no_grad()
 def eval_loss_acc(model: nn.Module, loader, criterion) -> Tuple[float, float]:
     model.eval()
+    dev = next(model.parameters()).device
+    pin = dev.type == "cuda"
     total = 0.0
     correct = 0
     n = 0
     for x, t in loader:
+        x = x.to(dev, non_blocking=pin)
+        t = t.to(dev, non_blocking=pin)
         logits = model(x)
         loss = criterion(logits, t)
         pred = logits.argmax(dim=1)
