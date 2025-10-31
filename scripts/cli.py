@@ -201,10 +201,19 @@ def interactive_menu() -> int:
 
 
 def build_sweep_cmd(params: Dict[str, str]) -> List[str]:
+    script = REPO_ROOT / "experiments" / "sweep_modsum.py"
+
+    def supports(flag: str) -> bool:
+        try:
+            out = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, check=False)
+            return flag in (out.stdout or "") or flag in (out.stderr or "")
+        except Exception:
+            return False
+
     cmd = [
         sys.executable,
         "-u",
-        str(REPO_ROOT / "experiments" / "sweep_modsum.py"),
+        str(script),
         f"--runs={params['runs']}",
         f"--minN={params['minN']}",
         f"--maxN={params['maxN']}",
@@ -213,11 +222,11 @@ def build_sweep_cmd(params: Dict[str, str]) -> List[str]:
     ]
     if params.get("seed"):
         cmd.append(f"--seed={params['seed']}")
-    if params.get("batch_size_fixed"):
+    if params.get("batch_size_fixed") and supports("--batch-size-fixed"):
         cmd.append(f"--batch-size-fixed={params['batch_size_fixed']}")
-    if params.get("batch_choices"):
+    if params.get("batch_choices") and supports("--batch-choices"):
         cmd.append(f"--batch-choices={params['batch_choices']}")
-    if params.get("num_workers") is not None:
+    if params.get("num_workers") is not None and supports("--num-workers"):
         cmd.append(f"--num-workers={params['num_workers']}")
     return cmd
 
@@ -259,15 +268,24 @@ def interactive_sweep() -> int:
 
 
 def build_foundation_cmd(params: Dict[str, str]) -> List[str]:
+    script = REPO_ROOT / "experiments" / "weights2meta_train.py"
+
+    def supports(flag: str) -> bool:
+        try:
+            out = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, check=False)
+            return flag in (out.stdout or "") or flag in (out.stderr or "")
+        except Exception:
+            return False
+
     cmd = [
         sys.executable,
         "-u",
-        str(REPO_ROOT / "experiments" / "weights2meta_train.py"),
+        str(script),
         f"--runs-base={params['runs_base']}",
         f"--outdir={params['outdir']}",
         f"--epochs={params['epochs']}",
         f"--batch-size={params['batch_size']}",
-        f"--num-workers={params['num_workers']}",
+        # optional flags appended below
         f"--lr={params['lr']}",
         f"--token-size={params['token_size']}",
         f"--d-model={params['d_model']}",
@@ -278,6 +296,8 @@ def build_foundation_cmd(params: Dict[str, str]) -> List[str]:
         f"--train-frac={params['train_frac']}",
         f"--seed={params['seed']}",
     ]
+    if params.get("num_workers") is not None and supports("--num-workers"):
+        cmd.append(f"--num-workers={params['num_workers']}")
     return cmd
 
 
