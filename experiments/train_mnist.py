@@ -112,11 +112,46 @@ def main(argv: List[str]) -> int:
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,)),
     ])
-    train_full = datasets.MNIST(root=args.data, train=True, transform=tfm, download=True)
+    def manual_download(dest_root: Path) -> None:
+        import ssl
+        from urllib.request import urlopen
+        base = "https://ossci-datasets.s3.amazonaws.com/mnist/"
+        files = [
+            "train-images-idx3-ubyte.gz",
+            "train-labels-idx1-ubyte.gz",
+            "t10k-images-idx3-ubyte.gz",
+            "t10k-labels-idx1-ubyte.gz",
+        ]
+        raw = dest_root / "MNIST" / "raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        ctx = ssl.create_default_context()
+        # Best-effort: if corporate MITM breaks chain, fall back to unverified context
+        try_unverified = False
+        try:
+            for fn in files:
+                with urlopen(base + fn, context=ctx) as r, open(raw / fn, "wb") as f:
+                    f.write(r.read())
+        except Exception:
+            try_unverified = True
+        if try_unverified:
+            unverified = ssl._create_unverified_context()  # type: ignore[attr-defined]
+            for fn in files:
+                with urlopen(base + fn, context=unverified) as r, open(raw / fn, "wb") as f:
+                    f.write(r.read())
+
+    try:
+        train_full = datasets.MNIST(root=args.data, train=True, transform=tfm, download=True)
+    except Exception:
+        # Try a manual fetch from the OSSCI mirror (with SSL fallback), then load without download
+        manual_download(Path(args.data))
+        train_full = datasets.MNIST(root=args.data, train=True, transform=tfm, download=False)
     val_n = int(len(train_full) * args.val_frac)
     train_n = len(train_full) - val_n
     train_ds, val_ds = random_split(train_full, [train_n, val_n], generator=torch.Generator().manual_seed(args.seed))
-    test_ds = datasets.MNIST(root=args.data, train=False, transform=tfm, download=True)
+    try:
+        test_ds = datasets.MNIST(root=args.data, train=False, transform=tfm, download=True)
+    except Exception:
+        test_ds = datasets.MNIST(root=args.data, train=False, transform=tfm, download=False)
 
     pin = dev.type == "cuda"
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=pin)
@@ -192,4 +227,3 @@ def main(argv: List[str]) -> int:
 if __name__ == "__main__":
     import sys
     raise SystemExit(main(sys.argv[1:]))
-

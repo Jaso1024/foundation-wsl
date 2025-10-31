@@ -266,6 +266,7 @@ def build_mnist_train_cmd(params: Dict[str, str]) -> List[str]:
         f"--outdir={params['outdir']}",
         f"--data={params['data']}",
     ]
+    # no special flags
     return cmd
 
 
@@ -609,4 +610,5 @@ if __name__ == "__main__":
     mt.add_argument("--seed", type=int, default=1337)
     mt.add_argument("--outdir", type=str, default="runs/mnist")
     mt.add_argument("--data", type=str, default="data")
+    mt.add_argument("--no-download", action="store_true")
     mt.add_argument("--log", type=str, default=None)
