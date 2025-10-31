@@ -114,6 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--maxN", type=int, default=31, help="Max N inclusive. Default: 31.")
     sp.add_argument("--epochs", type=int, default=20, help="Epochs per run. Default: 20.")
     sp.add_argument("--batch-size", type=int, default=128, help="Batch size per run. Default: 128.")
+    sp.add_argument("--train-samples", type=int, default=None, help="Training samples per epoch (<= train pool). Default: full train pool.")
+    sp.add_argument("--resample-each-epoch", action="store_true", help="If set with --train-samples, resample new subset each epoch.")
     sp.add_argument("--base-out", type=str, default="runs/modsum", help="Per-run artifacts base dir.")
     sp.add_argument("--sweep-out", type=str, default="runs/modsum_sweeps", help="Sweep summary dir.")
     sp.add_argument("--seed", type=int, default=None, help="Sweep RNG seed.")
@@ -222,6 +224,10 @@ def build_sweep_cmd(params: Dict[str, str]) -> List[str]:
     ]
     if params.get("seed"):
         cmd.append(f"--seed={params['seed']}")
+    if params.get("train_samples"):
+        cmd.append(f"--train-samples={params['train_samples']}")
+    if params.get("resample_each_epoch") == "1":
+        cmd.append("--resample-each-epoch")
     return cmd
 
 
@@ -232,6 +238,8 @@ def interactive_sweep() -> int:
     maxN = prompt_int("Max N", 31)
     epochs = prompt_int("Epochs per run", 20)
     batch_size = prompt_int("Batch size per run", 128)
+    ts_s = prompt_str("Training samples per epoch (blank=full)", "")
+    resample = prompt_yes("Resample training subset each epoch?", False) if ts_s else False
     base_out = prompt_str("Base out dir", "runs/modsum")
     sweep_out = prompt_str("Sweep out dir", "runs/modsum_sweeps")
     seed_s = prompt_str("Seed (blank=random)", "")
@@ -246,6 +254,8 @@ def interactive_sweep() -> int:
         "seed": seed_s,
         "epochs": str(epochs),
         "batch_size": str(batch_size),
+        "train_samples": ts_s,
+        "resample_each_epoch": "1" if resample else "0",
     }
     cmd = build_sweep_cmd(params)
     log = REPO_ROOT / sweep_out / "cli_logs" / f"sweep_{ts()}.out"
@@ -422,6 +432,8 @@ def main(argv: List[str] | None = None) -> int:
                 "base_out": args.base_out,
                 "sweep_out": args.sweep_out,
                 "seed": str(args.seed) if args.seed is not None else "",
+                "train_samples": str(args.train_samples) if args.train_samples is not None else "",
+                "resample_each_epoch": "1" if args.resample_each_epoch and args.train_samples is not None else "0",
             }
             cmd = build_sweep_cmd(params)
             log = Path(args.log) if args.log else (REPO_ROOT / args.sweep_out / "cli_logs" / f"sweep_{ts()}.out")

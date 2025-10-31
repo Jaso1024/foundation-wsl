@@ -72,6 +72,8 @@ class RunConfig:
     lr: float
     emb_dim: int
     hidden_dim: int
+    train_samples: int | None
+    resample_each_epoch: bool
     train_frac: float
     batch_size: int
     all_pairs: bool
@@ -177,7 +179,9 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=0.1, help="Learning rate. Default: 0.1.")
     p.add_argument("--emb-dim", type=int, default=16, help="Embedding dimension. Default: 16.")
     p.add_argument("--hidden-dim", type=int, default=32, help="Hidden dimension. Default: 32.")
-    p.add_argument("--train-frac", type=float, default=0.8, help="Train split fraction. Default: 0.8.")
+    p.add_argument("--train-frac", type=float, default=0.8, help="Fraction of total pairs reserved as train pool (test is the rest). Default: 0.8.")
+    p.add_argument("--train-samples", type=int, default=None, help="Number of training samples per epoch (<= train pool). Default: use full train pool.")
+    p.add_argument("--resample-each-epoch", action="store_true", help="If set with --train-samples, resample a new subset each epoch.")
     p.add_argument("--batch-size", type=int, default=128, help="Batch size. Default: 128.")
     p.add_argument("--all-pairs", action="store_true", help="Use all N^2 pairs (recommended). If not set, will still use all-pairs for speed & coverage.")
     p.add_argument("--outdir", type=str, default="runs/modsum", help="Base output directory. Default: runs/modsum")
@@ -195,14 +199,27 @@ def run_training(args) -> Path:
     seed = args.seed if args.seed is not None else random.randint(1, 10_000_000)
     set_seeds(seed)
 
-    # Generate dataset (all pairs by default for good coverage and speed)
-    samples = list(gen_all_pairs(N))
+    # Build full pool of samples; derive a fixed test split, and a train pool
+    all_samples = list(gen_all_pairs(N))
+    rng = random.Random(seed)
+    idx = list(range(len(all_samples)))
+    rng.shuffle(idx)
+    cut = int(args.train_frac * len(all_samples))
+    train_pool_idx, test_idx = idx[:cut], idx[cut:]
+    test_samples = [all_samples[i] for i in test_idx]
 
-    # Split
-    train_samples, test_samples = split_train_test(samples, args.train_frac, seed)
+    # Helper to make a train dataset for a given epoch
+    def make_train_ds(epoch: int) -> ModSumDataset:
+        if args.train_samples is None or args.train_samples >= len(train_pool_idx):
+            chosen = train_pool_idx
+        else:
+            # Stable but different sample each epoch when resampling: shift RNG by epoch
+            rng_e = random.Random(seed + epoch)
+            chosen = rng_e.sample(train_pool_idx, k=args.train_samples)
+        return ModSumDataset([all_samples[i] for i in chosen])
 
-    # Datasets / loaders
-    train_ds = ModSumDataset(train_samples)
+    # Initial datasets / loaders
+    train_ds = make_train_ds(epoch=0)
     test_ds = ModSumDataset(test_samples)
     device = get_device()
     pin = device.type == "cuda"
@@ -215,8 +232,11 @@ def run_training(args) -> Path:
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=args.lr)
 
-    # Train
-    for _ in range(args.epochs):
+    # Train (optionally resample training subset each epoch)
+    for ep in range(args.epochs):
+        if getattr(args, "resample_each_epoch", False) and args.train_samples is not None:
+            train_ds = make_train_ds(epoch=ep + 1)
+            train_loader = torch.utils.data.DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=pin)
         # move batches to device inside train loop
         model.train()
         total_loss = 0.0
@@ -263,9 +283,9 @@ def run_training(args) -> Path:
     base_dir.mkdir(parents=True, exist_ok=True)
     run_dir = build_run_dir(base_dir, N=N, seed=seed)
 
-    # Save datasets used
+    # Save datasets used (store the last epoch's train subset for reference)
     with open(run_dir / "train.csv", "w", newline="", encoding="utf-8") as f:
-        write_csv(train_samples, f)
+        write_csv([s for s in train_ds], f)
     with open(run_dir / "test.csv", "w", newline="", encoding="utf-8") as f:
         write_csv(test_samples, f)
 
@@ -280,6 +300,8 @@ def run_training(args) -> Path:
         lr=args.lr,
         emb_dim=args.emb_dim,
         hidden_dim=args.hidden_dim,
+        train_samples=int(args.train_samples) if args.train_samples is not None else None,
+        resample_each_epoch=bool(getattr(args, "resample_each_epoch", False)),
         train_frac=args.train_frac,
         batch_size=args.batch_size,
         all_pairs=True,
