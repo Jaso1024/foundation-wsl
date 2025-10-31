@@ -101,7 +101,7 @@ def main(argv: List[str]) -> int:
             cfg_args = sample_cfg(rng, args.minN, args.maxN, args.epochs, args.batch_size, args.train_samples, args.resample_each_epoch)
             # Ensure outputs go to the same base dir so train_main creates a new run dir under it
             # train_main uses --outdir to decide base output path
-            argv_run = [f"--outdir={args.base_out}"] + [f"{k}={v}" for k, v in cfg_args.items()]
+            argv_run = [f"--outdir={args.base_out}"] + [k if v == "" else f"{k}={v}" for k, v in cfg_args.items()]
 
             # Execute one training run and capture exact run directory
             train_args = parse_train_args(argv_run)

@@ -284,8 +284,13 @@ def run_training(args) -> Path:
     run_dir = build_run_dir(base_dir, N=N, seed=seed)
 
     # Save datasets used (store the last epoch's train subset for reference)
+    # Reconstruct Sample objects from the final train dataset's tensors
+    train_samples_last = [
+        Sample(int(x), int(y), int(t))
+        for x, y, t in zip(train_ds.x.tolist(), train_ds.y.tolist(), train_ds.t.tolist())
+    ]
     with open(run_dir / "train.csv", "w", newline="", encoding="utf-8") as f:
-        write_csv([s for s in train_ds], f)
+        write_csv(train_samples_last, f)
     with open(run_dir / "test.csv", "w", newline="", encoding="utf-8") as f:
         write_csv(test_samples, f)
 
