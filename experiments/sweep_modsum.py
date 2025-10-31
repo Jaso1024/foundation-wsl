@@ -25,7 +25,7 @@ from typing import Dict, List
 # Import the train entrypoint
 repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repo_root))
-from experiments.train_modsum import main as train_main  # type: ignore
+from experiments.train_modsum import run_training, parse_args as parse_train_args  # type: ignore
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
@@ -97,20 +97,11 @@ def main(argv: List[str]) -> int:
             cfg_args = sample_cfg(rng, args.minN, args.maxN)
             # Ensure outputs go to the same base dir so train_main creates a new run dir under it
             # train_main uses --outdir to decide base output path
-            argv_run = [
-                f"--outdir={args.base_out}",
-            ] + [f"{k}={v}" for k, v in cfg_args.items()]
+            argv_run = [f"--outdir={args.base_out}"] + [f"{k}={v}" for k, v in cfg_args.items()]
 
-            # Execute one training run
-            ret = train_main(argv_run)
-            if ret != 0:
-                print(f"Run {i} failed with code {ret}", file=sys.stderr)
-                continue
-
-            # After train_main, the last created directory is not returned.
-            # Read it by scanning the base directory for the most recent folder.
-            base_dir = Path(args.base_out)
-            latest = max(base_dir.glob("*_N*_seed*"), key=lambda p: p.stat().st_mtime)
+            # Execute one training run and capture exact run directory
+            train_args = parse_train_args(argv_run)
+            latest = run_training(train_args)
 
             # Load metrics from config.json stored by train_main
             with open(latest / "config.json", "r", encoding="utf-8") as f:
@@ -147,4 +138,3 @@ def main(argv: List[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

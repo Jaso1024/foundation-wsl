@@ -71,6 +71,7 @@ class RunConfig:
     epochs: int
     lr: float
     emb_dim: int
+    hidden_dim: int
     train_frac: float
     batch_size: int
     all_pairs: bool
@@ -183,8 +184,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def main(argv: List[str]) -> int:
-    args = parse_args(argv)
+def run_training(args) -> Path:
+    """Run a single training using parsed args and return the created run_dir.
+
+    This splits out the core work so sweep drivers can get the exact run_dir
+    without relying on filesystem mtimes.
+    """
 
     N = args.N if args.N is not None else random.randint(args.minN, args.maxN)
     seed = args.seed if args.seed is not None else random.randint(1, 10_000_000)
@@ -274,6 +279,7 @@ def main(argv: List[str]) -> int:
         epochs=args.epochs,
         lr=args.lr,
         emb_dim=args.emb_dim,
+        hidden_dim=args.hidden_dim,
         train_frac=args.train_frac,
         batch_size=args.batch_size,
         all_pairs=True,
@@ -295,6 +301,12 @@ def main(argv: List[str]) -> int:
 
     print(f"Saved run to: {run_dir}")
     print(json.dumps(info["metrics"], indent=2))
+    return run_dir
+
+
+def main(argv: List[str]) -> int:
+    args = parse_args(argv)
+    _ = run_training(args)
     return 0
 
 

@@ -57,7 +57,8 @@ def load_example(run_dir: Path) -> Tuple[np.ndarray, Dict[str, float]]:
         if not isinstance(t, torch.Tensor):
             continue
         flat_parts.append(t.detach().cpu().contiguous().view(-1).numpy())
-    flat = np.concatenate(flat_parts, dtype=np.float32)
+    # NumPy < 2.0 doesn't support dtype= on concatenate; cast afterward
+    flat = np.concatenate(flat_parts).astype(np.float32)
 
     with open(run_dir / "config.json", "r", encoding="utf-8") as f:
         info = json.load(f)
@@ -163,7 +164,7 @@ class TrainArgs:
     seed: int
 
 
-def parse_args() -> TrainArgs:
+def parse_args(argv: List[str] | None = None) -> TrainArgs:
     ap = argparse.ArgumentParser(description="Train transformer to predict run metadata from weights.")
     ap.add_argument("--runs-base", type=str, default="runs/modsum", help="Directory with individual runs (containing model.pt, config.json).")
     ap.add_argument("--outdir", type=str, default="runs/weights2meta", help="Where to save the transformer and summary.")
@@ -178,7 +179,7 @@ def parse_args() -> TrainArgs:
     ap.add_argument("--dropout", type=float, default=0.1)
     ap.add_argument("--train-frac", type=float, default=0.9)
     ap.add_argument("--seed", type=int, default=1337)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     return TrainArgs(**vars(a))
 
 
@@ -207,7 +208,7 @@ def pad_collate(batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.T
 
 
 def main(argv: List[str] | None = None) -> int:
-    args = parse_args()
+    args = parse_args(argv)
     set_seeds(args.seed)
 
     base = Path(args.runs_base)
