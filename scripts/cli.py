@@ -112,13 +112,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--runs", type=int, default=200, help="Number of runs to execute. Default: 200.")
     sp.add_argument("--minN", type=int, default=7, help="Min N inclusive. Default: 7.")
     sp.add_argument("--maxN", type=int, default=31, help="Max N inclusive. Default: 31.")
+    sp.add_argument("--epochs", type=int, default=20, help="Epochs per run. Default: 20.")
+    sp.add_argument("--batch-size", type=int, default=128, help="Batch size per run. Default: 128.")
     sp.add_argument("--base-out", type=str, default="runs/modsum", help="Per-run artifacts base dir.")
     sp.add_argument("--sweep-out", type=str, default="runs/modsum_sweeps", help="Sweep summary dir.")
     sp.add_argument("--seed", type=int, default=None, help="Sweep RNG seed.")
-    # Optional perf knobs (only forwarded if underlying script supports them)
-    sp.add_argument("--batch-size-fixed", type=int, default=None, help="Force batch size for all runs (if supported).")
-    sp.add_argument("--batch-choices", type=str, default=None, help="CSV of batch sizes to sample (if supported).")
-    sp.add_argument("--num-workers", type=int, default=None, help="DataLoader workers per run (if supported).")
     sp.add_argument("--log", type=str, default=None, help="Log file path (default auto under sweep-out/cli_logs).")
 
     # Foundation training subcommand
@@ -217,17 +215,13 @@ def build_sweep_cmd(params: Dict[str, str]) -> List[str]:
         f"--runs={params['runs']}",
         f"--minN={params['minN']}",
         f"--maxN={params['maxN']}",
+        f"--epochs={params['epochs']}",
+        f"--batch-size={params['batch_size']}",
         f"--base-out={params['base_out']}",
         f"--sweep-out={params['sweep_out']}",
     ]
     if params.get("seed"):
         cmd.append(f"--seed={params['seed']}")
-    if params.get("batch_size_fixed") and supports("--batch-size-fixed"):
-        cmd.append(f"--batch-size-fixed={params['batch_size_fixed']}")
-    if params.get("batch_choices") and supports("--batch-choices"):
-        cmd.append(f"--batch-choices={params['batch_choices']}")
-    if params.get("num_workers") is not None and supports("--num-workers"):
-        cmd.append(f"--num-workers={params['num_workers']}")
     return cmd
 
 
@@ -236,16 +230,11 @@ def interactive_sweep() -> int:
     runs = prompt_int("Number of runs", 200)
     minN = prompt_int("Min N", 7)
     maxN = prompt_int("Max N", 31)
+    epochs = prompt_int("Epochs per run", 20)
+    batch_size = prompt_int("Batch size per run", 128)
     base_out = prompt_str("Base out dir", "runs/modsum")
     sweep_out = prompt_str("Sweep out dir", "runs/modsum_sweeps")
     seed_s = prompt_str("Seed (blank=random)", "")
-    # Optional perf knobs
-    bs_fixed = prompt_str("Fixed batch size (blank=auto)", "")
-    bs_choices = prompt_str("Batch choices CSV (blank=auto)", "")
-    try:
-        num_workers = int(prompt_str("DataLoader workers (blank=0)", "0") or "0")
-    except ValueError:
-        num_workers = 0
     bg = prompt_yes("Run in background?", True)
 
     params = {
@@ -255,9 +244,8 @@ def interactive_sweep() -> int:
         "base_out": base_out,
         "sweep_out": sweep_out,
         "seed": seed_s,
-        "batch_size_fixed": bs_fixed,
-        "batch_choices": bs_choices,
-        "num_workers": str(num_workers),
+        "epochs": str(epochs),
+        "batch_size": str(batch_size),
     }
     cmd = build_sweep_cmd(params)
     log = REPO_ROOT / sweep_out / "cli_logs" / f"sweep_{ts()}.out"
@@ -429,12 +417,11 @@ def main(argv: List[str] | None = None) -> int:
                 "runs": str(args.runs),
                 "minN": str(args.minN),
                 "maxN": str(args.maxN),
+                "epochs": str(args.epochs),
+                "batch_size": str(args.batch_size),
                 "base_out": args.base_out,
                 "sweep_out": args.sweep_out,
                 "seed": str(args.seed) if args.seed is not None else "",
-                "batch_size_fixed": str(args.batch_size_fixed) if args.batch_size_fixed is not None else "",
-                "batch_choices": args.batch_choices or "",
-                "num_workers": str(args.num_workers) if args.num_workers is not None else "",
             }
             cmd = build_sweep_cmd(params)
             log = Path(args.log) if args.log else (REPO_ROOT / args.sweep_out / "cli_logs" / f"sweep_{ts()}.out")

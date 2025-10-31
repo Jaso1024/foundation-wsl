@@ -33,20 +33,20 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--runs", type=int, default=200, help="Number of runs to execute. Default: 200.")
     p.add_argument("--minN", type=int, default=7, help="Min N for sampling (inclusive). Default: 7.")
     p.add_argument("--maxN", type=int, default=31, help="Max N for sampling (inclusive). Default: 31.")
+    p.add_argument("--epochs", type=int, default=20, help="Epochs per run. Default: 20.")
+    p.add_argument("--batch-size", type=int, default=128, help="Batch size per run. Default: 128.")
     p.add_argument("--base-out", type=str, default="runs/modsum", help="Base output dir for individual runs. Default: runs/modsum")
     p.add_argument("--sweep-out", type=str, default="runs/modsum_sweeps", help="Directory to store sweep summary. Default: runs/modsum_sweeps")
-    p.add_argument("--seed", type=int, default=None, help="Sweep seed (controls hyperparam sampling). Default: random.")
+    p.add_argument("--seed", type=int, default=None, help="Sweep seed (controls hyperparam sampling for other hparams). Default: random.")
     return p.parse_args(argv)
 
 
-def sample_cfg(rng: random.Random, minN: int, maxN: int) -> Dict[str, str]:
+def sample_cfg(rng: random.Random, minN: int, maxN: int, epochs: int, batch_size: int) -> Dict[str, str]:
     N = rng.randint(minN, maxN)
-    # Light-weight ranges to keep CPU runs fast
-    epochs = rng.choice([10, 12, 15, 20])
+    # Keep some variety in other hyperparameters, but epochs and batch_size are fixed
     lr = rng.choice([0.05, 0.1, 0.2, 0.3])
     emb_dim = rng.choice([8, 12, 16, 24])
     hidden_dim = rng.choice([16, 24, 32, 48])
-    batch_size = rng.choice([64, 128, 256])
     train_frac = rng.choice([0.7, 0.8, 0.9])
     seed = rng.randint(1, 10_000_000)
 
@@ -94,7 +94,7 @@ def main(argv: List[str]) -> int:
         writer.writeheader()
 
         for i in range(1, args.runs + 1):
-            cfg_args = sample_cfg(rng, args.minN, args.maxN)
+            cfg_args = sample_cfg(rng, args.minN, args.maxN, args.epochs, args.batch_size)
             # Ensure outputs go to the same base dir so train_main creates a new run dir under it
             # train_main uses --outdir to decide base output path
             argv_run = [f"--outdir={args.base_out}"] + [f"{k}={v}" for k, v in cfg_args.items()]
