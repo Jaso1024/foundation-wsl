@@ -231,6 +231,38 @@ def build_sweep_cmd(params: Dict[str, str]) -> List[str]:
     return cmd
 
 
+def build_mnist_sweep_cmd(params: Dict[str, str]) -> List[str]:
+    script = REPO_ROOT / "experiments" / "sweep_mnist.py"
+    cmd = [
+        sys.executable, "-u", str(script),
+        f"--runs={params['runs']}",
+        f"--epochs={params['epochs']}",
+        f"--batch-size={params['batch_size']}",
+        f"--base-out={params['base_out']}",
+        f"--sweep-out={params['sweep_out']}",
+    ]
+    if params.get("seed"):
+        cmd.append(f"--seed={params['seed']}")
+    return cmd
+
+
+def build_mnist_train_cmd(params: Dict[str, str]) -> List[str]:
+    script = REPO_ROOT / "experiments" / "train_mnist.py"
+    cmd = [
+        sys.executable, "-u", str(script),
+        f"--epochs={params['epochs']}",
+        f"--batch-size={params['batch_size']}",
+        f"--lr={params['lr']}",
+        f"--hidden1={params['hidden1']}",
+        f"--hidden2={params['hidden2']}",
+        f"--val-frac={params['val_frac']}",
+        f"--seed={params['seed']}",
+        f"--outdir={params['outdir']}",
+        f"--data={params['data']}",
+    ]
+    return cmd
+
+
 def interactive_sweep() -> int:
     print("\n[ModSum Sweep]")
     runs = prompt_int("Number of runs", 200)
@@ -460,6 +492,35 @@ def main(argv: List[str] | None = None) -> int:
             log = Path(args.log) if args.log else (REPO_ROOT / args.outdir / "cli_logs" / f"foundation_train_{ts()}.out")
             return run_fg(cmd) if foreground else run_bg(cmd, log, job_type="foundation-train", params=params)
 
+        if args.cmd == "mnist-sweep":
+            params = {
+                "runs": str(args.runs),
+                "epochs": str(args.epochs),
+                "batch_size": str(args.batch_size),
+                "base_out": args.base_out,
+                "sweep_out": args.sweep_out,
+                "seed": str(args.seed) if args.seed is not None else "",
+            }
+            cmd = build_mnist_sweep_cmd(params)
+            log = Path(args.log) if args.log else (REPO_ROOT / args.sweep_out / "cli_logs" / f"mnist_sweep_{ts()}.out")
+            return run_fg(cmd) if foreground else run_bg(cmd, log, job_type="mnist-sweep", params=params)
+
+        if args.cmd == "mnist-train":
+            params = {
+                "epochs": str(args.epochs),
+                "batch_size": str(args.batch_size),
+                "lr": str(args.lr),
+                "hidden1": str(args.hidden1),
+                "hidden2": str(args.hidden2),
+                "val_frac": str(args.val_frac),
+                "seed": str(args.seed),
+                "outdir": args.outdir,
+                "data": args.data,
+            }
+            cmd = build_mnist_train_cmd(params)
+            log = Path(args.log) if args.log else (REPO_ROOT / args.outdir / "cli_logs" / f"mnist_train_{ts()}.out")
+            return run_fg(cmd) if foreground else run_bg(cmd, log, job_type="mnist-train", params=params)
+
         ap.error("Unknown command")
         return 2
 
@@ -469,3 +530,25 @@ def main(argv: List[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+    # MNIST sweep
+    msp = sub.add_parser("mnist-sweep", help="Run MNIST MLP sweep")
+    msp.add_argument("--runs", type=int, default=50)
+    msp.add_argument("--epochs", type=int, default=3)
+    msp.add_argument("--batch-size", type=int, default=128)
+    msp.add_argument("--base-out", type=str, default="runs/mnist")
+    msp.add_argument("--sweep-out", type=str, default="runs/mnist_sweeps")
+    msp.add_argument("--seed", type=int, default=None)
+    msp.add_argument("--log", type=str, default=None)
+
+    # MNIST train
+    mt = sub.add_parser("mnist-train", help="Train MNIST MLP once")
+    mt.add_argument("--epochs", type=int, default=3)
+    mt.add_argument("--batch-size", type=int, default=128)
+    mt.add_argument("--lr", type=float, default=1e-3)
+    mt.add_argument("--hidden1", type=int, default=256)
+    mt.add_argument("--hidden2", type=int, default=128)
+    mt.add_argument("--val-frac", type=float, default=0.1)
+    mt.add_argument("--seed", type=int, default=1337)
+    mt.add_argument("--outdir", type=str, default="runs/mnist")
+    mt.add_argument("--data", type=str, default="data")
+    mt.add_argument("--log", type=str, default=None)
