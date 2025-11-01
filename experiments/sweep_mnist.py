@@ -29,10 +29,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--base-out", type=str, default="runs/mnist")
     p.add_argument("--sweep-out", type=str, default="runs/mnist_sweeps")
     p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--num-workers", type=int, default=4)
     return p.parse_args(argv)
 
 
-def sample_cfg(rng: random.Random, epochs: int, batch_size: int) -> Dict[str, str]:
+def sample_cfg(rng: random.Random, epochs: int, batch_size: int, num_workers: int) -> Dict[str, str]:
     lr = rng.choice([5e-4, 1e-3, 3e-3, 1e-2])
     hidden1 = rng.choice([128, 256, 384])
     hidden2 = rng.choice([64, 128, 256])
@@ -40,6 +41,7 @@ def sample_cfg(rng: random.Random, epochs: int, batch_size: int) -> Dict[str, st
     return {
         "--epochs": str(epochs),
         "--batch-size": str(batch_size),
+        "--num-workers": str(num_workers),
         "--lr": str(lr),
         "--hidden1": str(hidden1),
         "--hidden2": str(hidden2),
@@ -65,7 +67,7 @@ def main(argv: List[str]) -> int:
         writer = csv.DictWriter(cf, fieldnames=fields)
         writer.writeheader()
         for i in range(1, args.runs + 1):
-            cfg = sample_cfg(rng, args.epochs, args.batch_size)
+            cfg = sample_cfg(rng, args.epochs, args.batch_size, args.num_workers)
             argv_run = [f"--outdir={args.base_out}"] + [f"{k}={v}" for k, v in cfg.items()]
             ret = train_main(argv_run)
             if ret != 0:
@@ -102,4 +104,3 @@ def main(argv: List[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

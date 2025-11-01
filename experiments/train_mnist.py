@@ -74,7 +74,7 @@ def build_run_dir(base: Path, seed: int) -> Path:
 def parse_args(argv: List[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train MLP on MNIST.")
     p.add_argument("--epochs", type=int, default=3)
-    p.add_argument("--batch-size", type=int, default=128)
+    p.add_argument("--batch-size", type=int, default=512)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--hidden1", type=int, default=256)
     p.add_argument("--hidden2", type=int, default=128)
@@ -82,6 +82,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=1337)
     p.add_argument("--outdir", type=str, default="runs/mnist")
     p.add_argument("--data", type=str, default="data", help="Dataset cache directory.")
+    p.add_argument("--num-workers", type=int, default=4, help="DataLoader workers for I/O (suggest 4-8).")
     return p.parse_args(argv)
 
 
@@ -170,9 +171,13 @@ def main(argv: List[str]) -> int:
         test_ds = datasets.MNIST(root=args.data, train=False, transform=tfm, download=False)
 
     pin = dev.type == "cuda"
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=pin)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, pin_memory=pin)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, pin_memory=pin)
+    pw = args.num_workers > 0
+    common = dict(pin_memory=pin, num_workers=args.num_workers, persistent_workers=pw)
+    if args.num_workers > 0:
+        common["prefetch_factor"] = 2
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, **common)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, **common)
+    test_loader = DataLoader(test_ds, batch_size=args.batch_size, **common)
 
     # Model
     model = MNISTMLP(hidden1=args.hidden1, hidden2=args.hidden2).to(dev)
